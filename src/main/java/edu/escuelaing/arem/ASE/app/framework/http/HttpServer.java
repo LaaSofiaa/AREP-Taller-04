@@ -2,7 +2,6 @@ package edu.escuelaing.arem.ASE.app.framework.http;
 
 import edu.escuelaing.arem.ASE.app.framework.annotations.*;
 import edu.escuelaing.arem.ASE.app.framework.config.SpringSofiaApp;
-
 import java.io.*;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -10,12 +9,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.function.BiFunction;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
+import java.util.jar.*;
 
 /**
  * Esta clase implementa un servidor HTTP básico que maneja solicitudes GET y POST.
@@ -27,32 +23,27 @@ public class HttpServer {
     private static String staticFilesDirectory = "src/main/java/resources";
     private static final Map<String, String> dataStore = new HashMap<>();
     private static final Map<String, BiFunction<HttpRequest, HttpResponse, String>> services = new HashMap<>(); // almacenar las rutas y sus manejadores (funciones lambda)
-    private static ExecutorService executorService = Executors.newCachedThreadPool();//maneja un pool de hilos
+    private static final ExecutorService executorService = Executors.newCachedThreadPool();//maneja un pool de hilos
     private static volatile boolean running = true;
 
     /**
      * Inicia el servidor y espera conexiones entrantes.
      */
-    public static void startServer(){
-
-        /// Crea el servidor que escucha en el puerto
-        ServerSocket serverSocket = null;
-        try {
-            serverSocket = new ServerSocket(port);
+    public static void startServer() {
+        try (ServerSocket serverSocket = new ServerSocket(port)) {
             System.out.println("Servidor escuchando en el puerto: " + port);
             while (running) {
-                // Acepta una nueva conexión y maneja la solictud del cliente
                 Socket clientSocket = serverSocket.accept();
-                //manejar cada solicitud en un hilo separado.
+                // Manejar cada solicitud en un hilo separado
                 executorService.submit(() -> handleRequestClient(clientSocket));
             }
         } catch (IOException e) {
-            System.err.println("No se pudo escuchar en el puerto: " + port);
-            System.exit(1);
-        }finally{
+            System.err.println("Error en el servidor: " + e.getMessage());
+        } finally {
             stopServer();
         }
     }
+
     /**
      * Detiene el servidor de manera elegante.
      */
@@ -69,16 +60,8 @@ public class HttpServer {
         System.out.println("Servidor detenido.");
     }
 
-    public static void printThreadsInfo() {
-        Set<Thread> threads = Thread.getAllStackTraces().keySet();
-        System.out.println("Hilos activos: " + threads.size());
-        for (Thread t : threads) {
-            System.out.println("Hilo: " + t.getName() + " - Estado: " + t.getState());
-        }
-    }
-
     /**
-     * Metodo encargado de cargar los componentes de la aplicación, escaneando los
+     * Método encargado de cargar los componentes de la aplicación, escaneando los
      * controladores anotados con @RestController y registrando sus rutas.
      */
     public static void loadComponents() throws Exception {
@@ -87,61 +70,55 @@ public class HttpServer {
             throw new RuntimeException("SpringSofiaApp no tiene la anotación @SpringSofiaScan");
         }
         String packageToScan = configClass.getAnnotation(SpringSofiaScan.class).value();
-        List<Class<?>> controllers = findControllers( packageToScan);
+        List<Class<?>> controllers = findControllers(packageToScan);
 
         for (Class<?> controller : controllers) {
             if (!controller.isAnnotationPresent(RestController.class)) continue;
 
-            String basePath = "";
-            if (controller.isAnnotationPresent(RequestMapping.class)) {
-                basePath = controller.getAnnotation(RequestMapping.class).value();
-            }
+            String basePath = controller.isAnnotationPresent(RequestMapping.class) ?
+                    controller.getAnnotation(RequestMapping.class).value() : "";
 
             System.out.println("Controlador detectado: " + controller.getName() + " en " + basePath);
             Object instance = controller.getDeclaredConstructor().newInstance();
 
-            //mirar si estan los metodos declarados
             for (Method method : controller.getDeclaredMethods()) {
-                String methodPath = basePath;
-
-                if (method.isAnnotationPresent(RequestMapping.class)) {
-                    RequestMapping requestMapping = method.getAnnotation(RequestMapping.class);
-                    methodPath += requestMapping.value();
-                }
-
                 if (method.isAnnotationPresent(GetMapping.class)) {
-                    GetMapping annotation = method.getAnnotation(GetMapping.class);
-                    String path = methodPath + annotation.value();
-                    System.out.println("Ruta registrada: " + path);
-
-                    services.put(path, (req, res) -> {
-                        try {
-                            Parameter[] parameters = method.getParameters();
-                            Object[] argsValues = new Object[parameters.length];
-
-                            for (int i = 0; i < parameters.length; i++) {
-                                if (parameters[i].isAnnotationPresent(RequestParam.class)) {
-                                    RequestParam paramAnnotation = parameters[i].getAnnotation(RequestParam.class);
-                                    String paramName = paramAnnotation.value();
-                                    String paramValue = req.getValues(paramName);
-                                    String defaultValue = paramAnnotation.defaultValue();
-                                    argsValues[i] = (paramValue != null && !paramValue.isEmpty()) ? paramValue
-                                            : (!defaultValue.equals("__NO_DEFAULT__") ? defaultValue : null);
-
-                                }
-                            }
-
-                            return (String) method.invoke(instance, argsValues);
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            return "Error en el controlador";
-                        }
-                    });
-
+                    String path = basePath + method.getAnnotation(GetMapping.class).value();
+                    services.put(path, createHandler(method, instance));
                     System.out.println("Registrado servicio en: " + path);
                 }
             }
         }
+    }
+
+    /**
+     * Crea un manejador para una ruta específica.
+     * @param method El método anotado con @GetMapping.
+     * @param instance La instancia del controlador.
+     * @return Una función que maneja la solicitud.
+     */
+    private static BiFunction<HttpRequest, HttpResponse, String> createHandler(Method method, Object instance) {
+        return (req, res) -> {
+            try {
+                Parameter[] parameters = method.getParameters();
+                Object[] argsValues = new Object[parameters.length];
+
+                for (int i = 0; i < parameters.length; i++) {
+                    if (parameters[i].isAnnotationPresent(RequestParam.class)) {
+                        RequestParam paramAnnotation = parameters[i].getAnnotation(RequestParam.class);
+                        String paramName = paramAnnotation.value();
+                        String paramValue = req.getValues(paramName);
+                        String defaultValue = paramAnnotation.defaultValue();
+                        argsValues[i] = (paramValue != null && !paramValue.isEmpty()) ? paramValue
+                                : (!defaultValue.equals("__NO_DEFAULT__") ? defaultValue : null);
+                    }
+                }
+                return (String) method.invoke(instance, argsValues);
+            } catch (Exception e) {
+                e.printStackTrace();
+                return "Error en el controlador";
+            }
+        };
     }
 
     /**
@@ -161,18 +138,24 @@ public class HttpServer {
                 File directory = new File(resource.toURI());
                 for (String file : directory.list()) {
                     if (file.endsWith(".class")) {
-                        String className = packageName + "." + file.replace(".class", "");
-                        classes.add(Class.forName(className));
+                        classes.add(Class.forName(packageName + "." + file.replace(".class", "")));
                     }
                 }
             } else if (resource.getProtocol().equals("jar")) {
                 classes.addAll(findClassesInJar(resource, packageName));
             }
         }
-
         return classes;
     }
 
+    /**
+     * Busca clases en un archivo JAR.
+     * @param resource URL del recurso JAR.
+     * @param packageName Nombre del paquete a escanear.
+     * @return Lista de clases encontradas en el JAR.
+     * @throws IOException Si ocurre un error al leer el JAR.
+     * @throws ClassNotFoundException Si no se encuentra una clase.
+     */
     private static List<Class<?>> findClassesInJar(URL resource, String packageName) throws IOException, ClassNotFoundException {
         List<Class<?>> classes = new ArrayList<>();
         String jarPath = resource.getPath().substring(5, resource.getPath().indexOf("!"));
@@ -182,8 +165,7 @@ public class HttpServer {
                 JarEntry entry = entries.nextElement();
                 String name = entry.getName();
                 if (name.startsWith(packageName.replace('.', '/')) && name.endsWith(".class")) {
-                    String className = name.replace("/", ".").replace(".class", "");
-                    classes.add(Class.forName(className));
+                    classes.add(Class.forName(name.replace("/", ".").replace(".class", "")));
                 }
             }
         }
@@ -201,29 +183,22 @@ public class HttpServer {
 
             String requestLine = in.readLine();
             if (requestLine != null) {
-                System.out.println("Solicitud recibida: " + requestLine);
                 // Divide la línea de la solicitud en partes: método y recurso.
                 String[] tokens = requestLine.split(" ");
                 String method = tokens[0];
-                String fileRequested = tokens[1];
-
-                if (fileRequested.equals("/")) {
-                    fileRequested = "/index.html";
-                }
+                String path = tokens[1].equals("/") ? "/index.html" : tokens[1];
 
                 if (method.equals("GET")) {
-                    handleGetRequest(fileRequested, dataOut, out);
+                    handleGetRequest(path, dataOut, out);
                 } else if (method.equals("POST")) {
-                    handlePostRequest(in, fileRequested, out);
+                    handlePostRequest(in, path, out);
                 } else {
                     out.println("HTTP/1.1 501 Not Implemented");
                 }
             }
         } catch (IOException e) {
-            System.err.println("No se pudo procesar la solicitud.");
-            System.exit(1);
-        }finally {
-            printThreadsInfo();
+            System.err.println("Error al procesar la solicitud: " + e.getMessage());
+        } finally {
             try {
                 clientSocket.close();
             } catch (IOException e) {
@@ -234,20 +209,17 @@ public class HttpServer {
 
     /**
      * Maneja una solicitud GET.
-     * @param path     La ruta solicitada.
+     * @param path La ruta solicitada.
      * @param dataOut El flujo de salida para enviar los datos.
      * @param out El flujo de salida para enviar las cabeceras HTTP.
      */
     public static void handleGetRequest(String path, BufferedOutputStream dataOut, PrintWriter out) {
-
         String basePath = path.split("\\?")[0];
 
-        if (services.containsKey(basePath)){
+        if (services.containsKey(basePath)) {
             System.out.println("Manejando ruta dinámica: " + basePath);
-
             HttpRequest req = new HttpRequest(path);
             HttpResponse res = new HttpResponse(out);
-
             String responseBody = services.get(basePath).apply(req, res);
 
             out.println("HTTP/1.1 200 OK");
@@ -257,18 +229,15 @@ public class HttpServer {
             System.out.println("GET " + path + " procesado exitosamente.");
             return;
         }
-
-        // Manejar archivos estáticos
+        // manejar archivos estaticos
         File file = new File(staticFilesDirectory, path);
         if (file.exists() && !file.isDirectory()) {
-            try {
-                String contentType = getType(path);
+            try (FileInputStream fileInputStream = new FileInputStream(file)) {
                 out.println("HTTP/1.1 200 OK");
-                out.println("Content-Type: " + contentType);
+                out.println("Content-Type: " + getType(path));
                 out.println();
                 out.flush();
 
-                FileInputStream fileInputStream = new FileInputStream(file);
                 byte[] buffer = new byte[1024];
                 int bytesRead;
                 while ((bytesRead = fileInputStream.read(buffer)) != -1) {
@@ -279,7 +248,7 @@ public class HttpServer {
                 System.out.println("Archivo " + path + " enviado exitosamente.");
             } catch (IOException e) {
                 out.println("HTTP/1.1 500 Internal Server Error");
-                System.err.println("Error al enviar el archivo " + path + ": " + e.getMessage());
+                System.err.println("Error al enviar el archivo: " + e.getMessage());
             }
         } else {
             out.println("HTTP/1.1 404 Not Found");
@@ -291,41 +260,37 @@ public class HttpServer {
      * Maneja una solicitud POST.
      * Si la solicitud es para la API /api/updateName, actualiza el nombre en la memoria.
      * @param in El flujo de entrada para leer la solicitud.
-     * @param path     La ruta solicitada..
+     * @param path La ruta solicitada.
      * @param out El flujo de salida para enviar las cabeceras HTTP.
      */
     private static void handlePostRequest(BufferedReader in, String path, PrintWriter out) {
-        if(path.equals("/App/updateName")) {
+        if (path.equals("/App/updateName")) {
             System.out.println("Manejando ruta dinámica: " + path);
             try {
-                String line;
                 int contentLength = 0;
+                String line;
                 while (!(line = in.readLine()).isEmpty()) {
                     if (line.startsWith("Content-Length:")) {
                         contentLength = Integer.parseInt(line.split(":")[1].trim());
                     }
                 }
 
-                // Leer el cuerpo de la solicitud
                 char[] body = new char[contentLength];
                 in.read(body, 0, contentLength);
                 String requestBody = new String(body);
                 System.out.println("Nombre actualizado: " + requestBody);
+                String name = requestBody.replace("{\"name\":\"", "").replace("\"}", "");
 
-                //Extrae el nuevo nombre y lo guarda
-                String name = requestBody.toString().replace("{\"name\":\"", "").replace("\"}", "");
                 dataStore.put("name", name);
-
                 out.println("HTTP/1.1 200 OK");
                 out.println("Content-Type: application/json");
                 out.println();
                 System.out.println("POST /App/updateName procesado exitosamente.");
-
             } catch (IOException e) {
                 out.println("HTTP/1.1 500 Internal Server Error");
-                System.err.println("Error procesando POST /api/updateName: " + e.getMessage());
+                System.err.println("Error procesando POST: " + e.getMessage());
             }
-        }else{
+        } else {
             out.println("HTTP/1.1 404 Not Found");
             System.err.println("Endpoint no encontrado: " + path);
         }
@@ -333,44 +298,24 @@ public class HttpServer {
 
     /**
      * Devuelve el tipo MIME correspondiente a una extensión de archivo.
-     * @param path
+     * @param path La ruta del archivo.
      * @return El tipo MIME del archivo.
      */
     private static String getType(String path) {
-        String extension = getFileExtension(path);
+        String extension = path.substring(path.lastIndexOf('.') + 1).toLowerCase();
         switch (extension) {
-            case "html":
-                return "text/html";
-            case "css":
-                return "text/css";
-            case "js":
-                return "application/javascript";
-            case "png":
-                return "image/png";
-            case "jpg":
-            case "jpeg":
-                return "image/jpeg";
-            default:
-                return "application/octet-stream";
+            case "html": return "text/html";
+            case "css": return "text/css";
+            case "js": return "application/javascript";
+            case "png": return "image/png";
+            case "jpg": case "jpeg": return "image/jpeg";
+            default: return "application/octet-stream";
         }
-    }
-
-    /**
-     * Extrae la extensión de un archivo.
-     * @param path     La ruta solicitada.
-     * @return La extensión del archivo.
-     */
-    private static String getFileExtension(String path) {
-        int dotIndex = path.lastIndexOf('.');
-        if (dotIndex == -1) {
-            return "";
-        }
-        return path.substring(dotIndex + 1).toLowerCase();
     }
 
     /**
      * Registra una ruta GET y su manejador.
-     * @param path    La ruta a registrar.
+     * @param path La ruta a registrar.
      * @param handler La función lambda que manejará la solicitud.
      */
     public static void get(String path, BiFunction<HttpRequest, HttpResponse, String> handler) {
@@ -393,5 +338,4 @@ public class HttpServer {
     public static Map<String, BiFunction<HttpRequest, HttpResponse, String>> getServices() {
         return services;
     }
-
 }
