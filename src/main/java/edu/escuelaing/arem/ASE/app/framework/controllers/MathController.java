@@ -26,6 +26,7 @@ public class MathController {
     public String pi() {
         return "El valor de Pi es: " + Math.PI;
     }
+
     @GetMapping("/suma")
     public String suma(@RequestParam("a") String a, @RequestParam("b") String b) {
         double result = Double.parseDouble(a) + Double.parseDouble(b);
@@ -37,8 +38,5 @@ public class MathController {
         double result = Double.parseDouble(a) - Double.parseDouble(b);
         return "Resta = " + result;
     }
-
-
-
 
 }

@@ -10,6 +10,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -24,7 +27,8 @@ public class HttpServer {
     private static String staticFilesDirectory = "src/main/java/resources";
     private static final Map<String, String> dataStore = new HashMap<>();
     private static final Map<String, BiFunction<HttpRequest, HttpResponse, String>> services = new HashMap<>(); // almacenar las rutas y sus manejadores (funciones lambda)
-
+    private static ExecutorService executorService = Executors.newCachedThreadPool();//maneja un pool de hilos
+    private static volatile boolean running = true;
 
     /**
      * Inicia el servidor y espera conexiones entrantes.
@@ -36,15 +40,40 @@ public class HttpServer {
         try {
             serverSocket = new ServerSocket(port);
             System.out.println("Servidor escuchando en el puerto: " + port);
-            boolean running = true;
             while (running) {
                 // Acepta una nueva conexión y maneja la solictud del cliente
                 Socket clientSocket = serverSocket.accept();
-                handleRequestClient(clientSocket);
+                //manejar cada solicitud en un hilo separado.
+                executorService.submit(() -> handleRequestClient(clientSocket));
             }
         } catch (IOException e) {
             System.err.println("No se pudo escuchar en el puerto: " + port);
             System.exit(1);
+        }finally{
+            stopServer();
+        }
+    }
+    /**
+     * Detiene el servidor de manera elegante.
+     */
+    public static void stopServer() {
+        running = false;
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(10, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+        }
+        System.out.println("Servidor detenido.");
+    }
+
+    public static void printThreadsInfo() {
+        Set<Thread> threads = Thread.getAllStackTraces().keySet();
+        System.out.println("Hilos activos: " + threads.size());
+        for (Thread t : threads) {
+            System.out.println("Hilo: " + t.getName() + " - Estado: " + t.getState());
         }
     }
 
@@ -193,6 +222,13 @@ public class HttpServer {
         } catch (IOException e) {
             System.err.println("No se pudo procesar la solicitud.");
             System.exit(1);
+        }finally {
+            printThreadsInfo();
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                System.err.println("Error al cerrar el socket: " + e.getMessage());
+            }
         }
     }
 

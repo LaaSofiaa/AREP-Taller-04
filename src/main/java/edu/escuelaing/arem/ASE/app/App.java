@@ -13,6 +13,10 @@ public class App {
         staticfiles("src/main/java/resources");
         HttpServer.loadComponents();
 
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            System.out.println("Apagando el servidor...");
+            HttpServer.stopServer();
+        }));
 
         get("/App/hello", (request, respond) -> {
             String name = request.getValues("name");
@@ -31,7 +35,6 @@ public class App {
         HttpServer.startServer();
 
     }
-
 
     /**
      * Define el directorio donde se encuentran los archivos estáticos.
