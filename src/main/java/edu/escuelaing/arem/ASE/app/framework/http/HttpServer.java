@@ -1,5 +1,6 @@
 package edu.escuelaing.arem.ASE.app.framework.http;
 
+import edu.escuelaing.arem.ASE.app.App;
 import edu.escuelaing.arem.ASE.app.framework.annotations.*;
 import edu.escuelaing.arem.ASE.app.framework.config.SpringSofiaApp;
 import java.io.*;
@@ -20,7 +21,6 @@ import java.util.jar.*;
  */
 public class HttpServer {
     private static final int port = 35000;
-    private static String staticFilesDirectory = "src/main/java/resources";
     private static final Map<String, String> dataStore = new HashMap<>();
     private static final Map<String, BiFunction<HttpRequest, HttpResponse, String>> services = new HashMap<>(); // almacenar las rutas y sus manejadores (funciones lambda)
     private static final ExecutorService executorService = Executors.newCachedThreadPool();//maneja un pool de hilos
@@ -184,6 +184,7 @@ public class HttpServer {
             String requestLine = in.readLine();
             if (requestLine != null) {
                 // Divide la línea de la solicitud en partes: método y recurso.
+                System.out.println("Solicitud recibida: " + requestLine);
                 String[] tokens = requestLine.split(" ");
                 String method = tokens[0];
                 String path = tokens[1].equals("/") ? "/index.html" : tokens[1];
@@ -215,6 +216,7 @@ public class HttpServer {
      */
     public static void handleGetRequest(String path, BufferedOutputStream dataOut, PrintWriter out) {
         String basePath = path.split("\\?")[0];
+        System.out.println("Ruta solicitada: " + basePath);
 
         if (services.containsKey(basePath)) {
             System.out.println("Manejando ruta dinámica: " + basePath);
@@ -230,7 +232,8 @@ public class HttpServer {
             return;
         }
         // manejar archivos estaticos
-        File file = new File(staticFilesDirectory, path);
+        File file = new File(App.getStaticFilesDirectory(), path);
+        System.out.println("Buscando archivo en: " + file.getAbsolutePath());
         if (file.exists() && !file.isDirectory()) {
             try (FileInputStream fileInputStream = new FileInputStream(file)) {
                 out.println("HTTP/1.1 200 OK");

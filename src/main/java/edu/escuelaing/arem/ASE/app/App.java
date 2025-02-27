@@ -41,7 +41,13 @@ public class App {
      * @param directory El directorio de archivos estáticos.
      */
     public static void staticfiles(String directory) {
-        staticFilesDirectory = directory;
+        if (System.getenv("DOCKER_ENV") != null) {
+            staticFilesDirectory = "/usrapp/bin/resources"; // Ruta Docker
+            System.out.println("Usando ruta Docker: " + staticFilesDirectory);
+        } else {
+            staticFilesDirectory = directory; // Ruta en local
+            System.out.println("Usando ruta local: " + staticFilesDirectory);
+        }
     }
 
     public static String getStaticFilesDirectory() {
