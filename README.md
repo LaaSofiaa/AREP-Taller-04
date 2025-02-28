@@ -175,8 +175,12 @@ Se implementó un mecanismo de apagado controlado para asegurar que los recursos
      
 ## Docker y AWS
 
+[Ver video de demostración](https://youtu.be/QlU1eKl3LXI)
 
-https://github.com/user-attachments/assets/63942850-eaad-4f42-bc3e-3fced7de0b28
+
+https://github.com/user-attachments/assets/d42b6113-a425-415c-b2f8-fa7a3b0f9600
+
+
 
 
 ## Pruebas Automatizadas
